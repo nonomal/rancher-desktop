@@ -18,7 +18,7 @@ On the **Kubernetes Settings** tab, you can manage the settings of your virtual 
 
 ### Kubernetes Version
 
-This option presents a list of Kubernetes versions that your Rancher Desktop instance can use. 
+This option presents a list of Kubernetes versions that your Rancher Desktop instance can use.
 
 When upgrading:
 
@@ -61,7 +61,7 @@ Set the port Kubernetes is exposed on. Use this setting to avoid port collisions
 
 ### Reset Kubernetes/Reset Kubernetes and Container Images
 
-This option removes all workloads and Kubernetes configurations. 
+This option removes all workloads and Kubernetes configurations.
 Images that have been pulled are not removed when a reset occurs.
 1. On the confirmation window, click **OK** to proceed.
 
@@ -85,7 +85,6 @@ On the **Supporting Utilities** tab, you can create symbolic links to tools in /
 Symbolic links can be created (or removed) for the following tools, which are installed as part Rancher Desktop:
 
 - helm
-- kim
 - kubectl
 - nerdctl
 - docker
