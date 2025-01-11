@@ -5,7 +5,7 @@ Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+	http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,16 +13,18 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
+
 package cmd
 
 import (
+	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
-	"github.com/rancher-sandbox/rancher-desktop/src/wsl-helper/pkg/process"
+	"github.com/rancher-sandbox/rancher-desktop/src/go/wsl-helper/pkg/process"
 
 	// Pull in to register the mungers
-	_ "github.com/rancher-sandbox/rancher-desktop/src/wsl-helper/pkg/dockerproxy/mungers"
+	_ "github.com/rancher-sandbox/rancher-desktop/src/go/wsl-helper/pkg/dockerproxy/mungers"
 )
 
 var dockerproxyKillViper = viper.New()
@@ -42,6 +44,8 @@ var dockerproxyKillCmd = &cobra.Command{
 
 func init() {
 	dockerproxyKillViper.AutomaticEnv()
-	dockerproxyKillViper.BindPFlags(dockerproxyKillCmd.Flags())
+	if err := dockerproxyKillViper.BindPFlags(dockerproxyKillCmd.Flags()); err != nil {
+		logrus.WithError(err).Fatal("Failed to set up flags")
+	}
 	dockerproxyCmd.AddCommand(dockerproxyKillCmd)
 }

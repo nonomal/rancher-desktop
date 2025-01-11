@@ -41,12 +41,73 @@ BuildRequires:  ImageMagick
 %endif
 
 %if 0%{?debian}
-Requires:       qemu-utils
-Requires:       qemu-system-x86
-Requires:       openssh-client
+Requires: qemu-utils
+Requires: qemu-system-x86
+Requires: pass
+Requires: openssh-client
+Requires: gnupg
+Requires: libasound2
+Requires: libatk1.0-0
+Requires: libatk-bridge2.0-0
+Requires: libatspi2.0-0
+Requires: libc6
+Requires: libcairo2
+Requires: libcups2
+Requires: libdbus-1-3
+Requires: libdrm2
+Requires: libexpat1
+Requires: libgbm1
+Requires: libgcc1
+Requires: libgdk-pixbuf2.0-0
+Requires: libglib2.0-0
+Requires: libglib2.0-dev
+Requires: libgtk-3-0
+Requires: libnspr4
+Requires: libnss3
+Requires: libpango-1.0-0
+Requires: libx11-6
+Requires: libxcb1
+Requires: libxcomposite1
+Requires: libxdamage1
+Requires: libxext6
+Requires: libxfixes3
+Requires: libxkbcommon0
+Requires: libxrandr2
 %else
-Requires:       qemu
-Requires:       openssh-clients
+Requires: qemu
+Requires: password-store
+Requires: openssh-clients
+Requires: gpg2
+Requires: glibc
+Requires: desktop-file-utils
+Requires: libX11-6
+Requires: libXcomposite1
+Requires: libXdamage1
+Requires: libXext6
+Requires: libXfixes3
+Requires: libXrandr2
+Requires: libasound2
+Requires: libatk-1_0-0
+Requires: libatk-bridge-2_0-0
+Requires: libatspi0
+Requires: libcairo2
+Requires: libcups2
+Requires: libdbus-1-3
+Requires: libdrm2
+Requires: libexpat1
+Requires: libgbm1
+Requires: libgcc_s1
+Requires: libgdk_pixbuf-2_0-0
+Requires: libgio-2_0-0
+Requires: libglib-2_0-0
+Requires: libgmodule-2_0-0
+Requires: libgobject-2_0-0
+Requires: libgtk-3-0
+Requires: libpango-1_0-0
+Requires: libxcb1
+Requires: libxkbcommon0
+Requires: mozilla-nspr
+Requires: mozilla-nss
 %endif
 
 %description
@@ -69,29 +130,27 @@ mv resources/resources/linux/rancher-desktop.desktop share/applications/rancher-
 mv resources/resources/linux/rancher-desktop.appdata.xml share/metainfo/rancher-desktop.appdata.xml
 
 # Remove qemu binaries included in lima tarball
-rm -v resources/resources/linux/lima/bin/qemu-* 
+rm -v resources/resources/linux/lima/bin/qemu-*
 rm -rvf resources/resources/linux/lima/lib
 rm -rvf resources/resources/linux/lima/share/qemu
 
 %install
 mkdir -p "%{buildroot}%{_prefix}/bin" "%{buildroot}/opt/%{name}"
 
-cp -ra ./share "%{buildroot}%{_prefix}" 
+cp -ra ./share "%{buildroot}%{_prefix}"
 cp -ra ./* "%{buildroot}/opt/%{name}"
 
 # Link to the binary
 ln -sf "/opt/%{name}/rancher-desktop" "%{buildroot}%{_bindir}/rancher-desktop"
 
 %post
-# SUID chrome-sandbox for Electron 5+
-chmod 4755 "/opt/%{name}/chrome-sandbox"
-
 update-desktop-database %{_prefix}/share/applications || true
 
 %files
 %defattr(-,root,root,-)
 %dir /opt/%{name}
 /opt/%{name}*
+%attr(4755,root,root) /opt/%{name}/chrome-sandbox
 %{_bindir}/rancher-desktop
 %{_prefix}/share/applications/rancher-desktop.desktop
 %{_prefix}/share/icons/hicolor/*

@@ -5,7 +5,7 @@ Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+	http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,18 +13,20 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
+
 package cmd
 
 import (
+	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
-	"github.com/rancher-sandbox/rancher-desktop/src/wsl-helper/pkg/dockerproxy"
-	"github.com/rancher-sandbox/rancher-desktop/src/wsl-helper/pkg/dockerproxy/platform"
-	"github.com/rancher-sandbox/rancher-desktop/src/wsl-helper/pkg/process"
+	"github.com/rancher-sandbox/rancher-desktop/src/go/wsl-helper/pkg/dockerproxy"
+	"github.com/rancher-sandbox/rancher-desktop/src/go/wsl-helper/pkg/dockerproxy/platform"
+	"github.com/rancher-sandbox/rancher-desktop/src/go/wsl-helper/pkg/process"
 
 	// Pull in to register the mungers
-	_ "github.com/rancher-sandbox/rancher-desktop/src/wsl-helper/pkg/dockerproxy/mungers"
+	_ "github.com/rancher-sandbox/rancher-desktop/src/go/wsl-helper/pkg/dockerproxy/mungers"
 )
 
 var dockerproxyServeViper = viper.New()
@@ -55,9 +57,15 @@ var dockerproxyServeCmd = &cobra.Command{
 }
 
 func init() {
+	defaultProxyEndpoint, err := dockerproxy.GetDefaultProxyEndpoint()
+	if err != nil {
+		logrus.Fatalf("could not initialize options: %s", err)
+	}
 	dockerproxyServeCmd.Flags().String("endpoint", platform.DefaultEndpoint, "Endpoint to listen on")
-	dockerproxyServeCmd.Flags().String("proxy-endpoint", dockerproxy.DefaultProxyEndpoint, "Endpoint dockerd is listening on")
+	dockerproxyServeCmd.Flags().String("proxy-endpoint", defaultProxyEndpoint, "Endpoint dockerd is listening on")
 	dockerproxyServeViper.AutomaticEnv()
-	dockerproxyServeViper.BindPFlags(dockerproxyServeCmd.Flags())
+	if err := dockerproxyServeViper.BindPFlags(dockerproxyServeCmd.Flags()); err != nil {
+		logrus.WithError(err).Fatal("Failed to set up flags")
+	}
 	dockerproxyCmd.AddCommand(dockerproxyServeCmd)
 }

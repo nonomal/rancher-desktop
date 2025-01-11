@@ -1,10 +1,9 @@
-import os from 'os';
-import path from 'path';
-import {
-  ElectronApplication, BrowserContext, _electron, Page, Locator
-} from 'playwright';
-import { test, expect } from '@playwright/test';
-import { createDefaultSettings, playwrightReportAssets } from './utils/TestUtils';
+import { test, expect, _electron } from '@playwright/test';
+
+import { NavPage } from './pages/nav-page';
+import { createDefaultSettings, startRancherDesktop, teardown } from './utils/TestUtils';
+
+import type { ElectronApplication, Page } from '@playwright/test';
 
 let page: Page;
 
@@ -13,134 +12,55 @@ let page: Page;
  * Playwright executes test in parallel by default and it will not work for our app backend loading process.
  * */
 test.describe.serial('Main App Test', () => {
-  let mainTitle: Locator;
   let electronApp: ElectronApplication;
-  let context: BrowserContext;
-  const mainTitleSelector = '[data-test="mainTitle"]';
 
-  test.beforeAll(async() => {
+  test.beforeAll(async({ colorScheme }, testInfo) => {
     createDefaultSettings();
-    electronApp = await _electron.launch({
-      args: [
-        path.join(__dirname, '../'),
-        '--disable-gpu',
-        '--whitelisted-ips=',
-        '--disable-dev-shm-usage',
-      ]
-    });
-    context = electronApp.context();
 
-    await context.tracing.start({ screenshots: true, snapshots: true });
+    electronApp = await startRancherDesktop(testInfo);
     page = await electronApp.firstWindow();
   });
 
-  test.afterAll(async() => {
-    await context.tracing.stop({ path: playwrightReportAssets(path.basename(__filename)) });
-    await electronApp.close();
+  test.afterAll(({ colorScheme }, testInfo) => teardown(electronApp, testInfo));
+
+  test('should start loading the background services and hide progress bar', async() => {
+    const navPage = new NavPage(page);
+
+    await navPage.progressBecomesReady();
+    await expect(navPage.progressBar).toBeHidden();
   });
 
   test('should land on General page', async() => {
-    mainTitle = page.locator(mainTitleSelector);
+    const navPage = new NavPage(page);
 
-    await expect(mainTitle).toHaveText('Welcome to Rancher Desktop');
+    await expect(navPage.mainTitle).toHaveText('Welcome to Rancher Desktop by SUSE');
   });
 
-  test('should start loading the background services and hide progress bar', async() => {
-    const progressBarSelector = page.locator('.progress');
+  test('should navigate to Port Forwarding and check elements', async() => {
+    const navPage = new NavPage(page);
+    const portForwardPage = await navPage.navigateTo('PortForwarding');
 
-    // Wait until progress bar show up. It takes roughly ~60s to start in CI
-    await progressBarSelector.waitFor({ state: 'visible', timeout: 200_000 });
-    // Wait until progress bar be detached. With that we can make sure the services were started
-    await progressBarSelector.waitFor({ state: 'detached', timeout: 300_000 });
-    await expect(progressBarSelector).toBeHidden();
+    await expect(navPage.mainTitle).toHaveText('Port Forwarding');
+    await expect(portForwardPage.content).toBeVisible();
+    await expect(portForwardPage.table).toBeVisible();
+    await expect(portForwardPage.fixedHeader).toBeVisible();
   });
-
-  test('should navigate to Kubernetes Settings and check elements', async() => {
-    const k8sMemorySliderSelector = '[id="memoryInGBWrapper"]';
-    const k8sCpuSliderSelector = '[id="numCPUWrapper"]';
-    const k8sPortSelector = '[data-test="portConfig"]';
-    const k8sResetBtn = '[data-test="k8sResetBtn"]';
-
-    await navigateTo('K8s');
-    // Collecting data from selectors
-    const k8sSettingsTitle = page.locator(mainTitleSelector);
-    const k8sMemorySlider = page.locator(k8sMemorySliderSelector);
-    const k8sCpuSlider = page.locator(k8sCpuSliderSelector);
-    const k8sPort = page.locator(k8sPortSelector);
-    const k8sResetButton = page.locator(k8sResetBtn);
-
-    if (!os.platform().startsWith('win')) {
-      await expect(k8sMemorySlider).toBeVisible();
-      await expect(k8sCpuSlider).toBeVisible();
-    }
-
-    await expect(k8sSettingsTitle).toHaveText('Kubernetes Settings');
-    await expect(k8sPort).toBeVisible();
-    await expect(k8sResetButton).toBeVisible();
-  });
-
-  /**
-   * Checking WSL and Port Forwarding - Windows Only
-   */
-  if (os.platform().startsWith('win')) {
-    test('should navigate to WSL Integration and check elements', async() => {
-      const wslDescriptionSelector = '.description';
-
-      await navigateTo('Integrations');
-      const getWslIntegrationTitle = page.locator(mainTitleSelector);
-      const getWslDescriptionText = page.locator(wslDescriptionSelector);
-
-      await expect(getWslIntegrationTitle).toHaveText('WSL Integration');
-      await expect(getWslDescriptionText).toBeVisible();
-    });
-
-    test('should navigate to Port Forwarding and check elements', async() => {
-      const portForwardingContentSelector = '.content';
-
-      await navigateTo('PortForwarding');
-      const getPortForwardingTitle = page.locator(mainTitleSelector);
-      const getPortForwardingContent = page.locator(portForwardingContentSelector);
-
-      await expect(getPortForwardingTitle).toHaveText('Port Forwarding');
-      await expect(getPortForwardingContent).toBeVisible();
-    });
-  }
-
-  /**
-   * Checking Support Utilities symlink list - macOS/Linux Only
-   */
-  if (!os.platform().startsWith('win')) {
-    test('should navigate to Supporting Utilities and check elements', async() => {
-      await navigateTo('Integrations');
-      const getSupportTitle = page.locator(mainTitleSelector);
-
-      await expect(getSupportTitle).toHaveText('Supporting Utilities');
-    });
-  }
 
   test('should navigate to Images page', async() => {
-    const getSupportTitle = page.locator(mainTitleSelector);
+    const navPage = new NavPage(page);
+    const imagesPage = await navPage.navigateTo('Images');
 
-    await navigateTo('Images');
-    await expect(getSupportTitle).toHaveText('Images');
+    await expect(navPage.mainTitle).toHaveText('Images');
+    await expect(imagesPage.table).toBeVisible();
   });
 
   test('should navigate to Troubleshooting and check elements', async() => {
-    const getSupportTitle = page.locator(mainTitleSelector);
+    const navPage = new NavPage(page);
+    const troubleshootingPage = await navPage.navigateTo('Troubleshooting');
 
-    await navigateTo('Troubleshooting');
-    await expect(getSupportTitle).toHaveText('Troubleshooting');
+    await expect(navPage.mainTitle).toHaveText('Troubleshooting');
+    await expect(troubleshootingPage.troubleshooting).toBeVisible();
+    await expect(troubleshootingPage.logsButton).toBeVisible();
+    await expect(troubleshootingPage.factoryResetButton).toBeVisible();
   });
 });
-
-/**
- * Navigate to a specific page (AKA tab)
- * @param tab The tab to navigate to.
- * @example navigateTo('K8s'); it should click on Kubernetes Settings tab and wait until the page be loaded
- */
-async function navigateTo(tab: string) {
-  return await Promise.all([
-    page.click(`.nav li[item="/${ tab }"] a`),
-    page.waitForNavigation({ url: `**/${ tab }`, timeout: 60_000 }),
-  ]);
-}
