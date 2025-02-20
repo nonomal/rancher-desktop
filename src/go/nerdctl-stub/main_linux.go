@@ -1,16 +1,26 @@
 package main
 
 import (
+	"bytes"
+	"encoding/csv"
 	"errors"
 	"fmt"
 	"io"
 	"log"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"golang.org/x/sys/unix"
+)
+
+const (
+	// mountPointField is the zero-indexed field number inf /proc/self/mountinfo
+	// that contains the mount point.
+	mountPointField = 4
 )
 
 func spawn(opts spawnOptions) error {
@@ -39,14 +49,37 @@ func spawn(opts spawnOptions) error {
 
 var workdir string
 
+// Get the WSL mount point; typically, this is /mnt/wsl.
+func getWSLMountPoint() (string, error) {
+	buf, err := os.ReadFile("/proc/self/mountinfo")
+	if err != nil {
+		return "", fmt.Errorf("error reading mounts: %w", err)
+	}
+	for _, line := range strings.Split(string(buf), "\n") {
+		if !strings.Contains(line, " - tmpfs ") {
+			// Skip the line if the filesystem type isn't "tmpfs"
+			continue
+		}
+		fields := strings.Split(line, " ")
+		if len(fields) > mountPointField {
+			return fields[mountPointField], nil
+		}
+	}
+	return "", fmt.Errorf("could not find WSL mount root")
+}
+
 // function prepareParseArgs should be called before argument parsing to set up
 // the system for arg parsing.
 func prepareParseArgs() error {
 	if os.Geteuid() != 0 {
-		return fmt.Errorf("Got unexpected euid %v", os.Geteuid())
+		return fmt.Errorf("got unexpected euid %v", os.Geteuid())
 	}
-	rundir := "/mnt/wsl/rancher-desktop/run/"
-	err := os.MkdirAll(rundir, 0755)
+	mountPoint, err := getWSLMountPoint()
+	if err != nil {
+		return err
+	}
+	rundir := path.Join(mountPoint, "rancher-desktop/run/")
+	err = os.MkdirAll(rundir, 0755)
 	if err != nil {
 		return err
 	}
@@ -89,6 +122,34 @@ func cleanupParseArgs() error {
 	return nil
 }
 
+// doBindMount does the meat of the bind mounting.  Given a path, it makes a
+// mount inside workdir and returns the mounted path.
+func doBindMount(sourcePath string) (string, error) {
+	info, err := os.Stat(sourcePath)
+	if err != nil {
+		return "", fmt.Errorf("could not stat %s: %w", sourcePath, err)
+	}
+	var result string
+	if info.IsDir() {
+		result, err = os.MkdirTemp(workdir, "input.*")
+		if err != nil {
+			return "", err
+		}
+	} else {
+		resultFile, err := os.CreateTemp(workdir, "input.*")
+		if err != nil {
+			return "", err
+		}
+		resultFile.Close()
+		result = resultFile.Name()
+	}
+	err = unix.Mount(sourcePath, result, "none", unix.MS_BIND|unix.MS_REC, "")
+	if err != nil {
+		return "", err
+	}
+	return result, nil
+}
+
 // volumeArgHandler handles the argument for `nerdctl run --volume=...`
 func volumeArgHandler(arg string) (string, []cleanupFunc, error) {
 	// args is of format [host:]container[:ro|:rw]
@@ -109,38 +170,21 @@ func volumeArgHandler(arg string) (string, []cleanupFunc, error) {
 		containerPath = arg[colonIndex+1:]
 	}
 
-	mountDir, err := os.MkdirTemp(workdir, "mount.*")
-	if err != nil {
-		return "", nil, err
-	}
-	err = unix.Mount(hostPath, mountDir, "none", unix.MS_BIND|unix.MS_REC, "")
+	mountDir, err := doBindMount(hostPath)
 	if err != nil {
 		return "", nil, err
 	}
 	return mountDir + ":" + containerPath + readWrite, nil, nil
 }
 
+// mountArgHandler handles the argument for `nerdctl run --mount=...`
+func mountArgHandler(arg string) (string, []cleanupFunc, error) {
+	return mountArgProcessor(arg, doBindMount)
+}
+
 // filePathArgHandler handles arguments that take a file path for input
 func filePathArgHandler(arg string) (string, []cleanupFunc, error) {
-	info, err := os.Stat(arg)
-	if err != nil {
-		return "", nil, fmt.Errorf("could not stat %s: %w", arg, err)
-	}
-	var result string
-	if info.IsDir() {
-		result, err = os.MkdirTemp(workdir, "input.*")
-		if err != nil {
-			return "", nil, err
-		}
-	} else {
-		resultFile, err := os.CreateTemp(workdir, "input.*")
-		if err != nil {
-			return "", nil, err
-		}
-		resultFile.Close()
-		result = resultFile.Name()
-	}
-	err = unix.Mount(arg, result, "none", unix.MS_BIND|unix.MS_REC, "")
+	result, err := doBindMount(arg)
 	if err != nil {
 		return "", nil, err
 	}
@@ -188,4 +232,67 @@ func outputPathArgHandler(arg string) (string, []cleanupFunc, error) {
 		return nil
 	}
 	return file.Name(), []cleanupFunc{callback}, nil
+}
+
+// builderCacheArgHandler handles arguments for
+// `nerdctl builder build --cache-from=` and `nerdctl builder build --cache-to=`
+func builderCacheArgHandler(arg string) (string, []cleanupFunc, error) {
+	return builderCacheProcessor(arg, filePathArgHandler, outputPathArgHandler)
+}
+
+// buildContextArgHandler handles arguments for
+// `nerdctl builder build --build-context=`.
+func buildContextArgHandler(arg string) (string, []cleanupFunc, error) {
+	// The arg must be parsed as CSV (!?), and then split on `=` for key-value
+	// pairs; for each value, it is either a URN with a prefix of one of
+	// `urnPrefixes`, or it's a filesystem path.
+
+	var cleanups []cleanupFunc
+	urnPrefixes := []string{"https://", "http://", "docker-image://", "target:", "oci-layout://"}
+	parts, err := csv.NewReader(strings.NewReader(arg)).Read()
+	if err != nil {
+		return "", nil, err
+	}
+	var resultParts []string
+	for _, part := range parts {
+		kv := strings.SplitN(part, "=", 2)
+		if len(kv) != 2 {
+			return "", nil, fmt.Errorf("failed to parse context value %q (expected key=value)", part)
+		}
+		k, v := kv[0], kv[1]
+		matchesPrefix := func(prefix string) bool {
+			return strings.HasPrefix(v, prefix)
+		}
+		if !slices.ContainsFunc(urnPrefixes, matchesPrefix) {
+			mount, newCleanups, err := filePathArgHandler(v)
+			if err != nil {
+				_ = runCleanups(cleanups)
+				return "", nil, err
+			}
+			v = mount
+			cleanups = append(cleanups, newCleanups...)
+		}
+		resultParts = append(resultParts, fmt.Sprintf("%s=%s", k, v))
+	}
+	var result bytes.Buffer
+	writer := csv.NewWriter(&result)
+	if err := writer.Write(resultParts); err != nil {
+		_ = runCleanups(cleanups)
+		return "", nil, err
+	}
+	writer.Flush()
+	if err := writer.Error(); err != nil {
+		return "", nil, err
+	}
+	return strings.TrimSpace(result.String()), cleanups, nil
+}
+
+// argHandlers is the table of argument handlers.
+var argHandlers = argHandlersType{
+	volumeArgHandler:       volumeArgHandler,
+	filePathArgHandler:     filePathArgHandler,
+	outputPathArgHandler:   outputPathArgHandler,
+	mountArgHandler:        mountArgHandler,
+	builderCacheArgHandler: builderCacheArgHandler,
+	buildContextArgHandler: buildContextArgHandler,
 }

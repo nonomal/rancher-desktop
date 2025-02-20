@@ -1,0 +1,82 @@
+name: e2e tests on Mac M1
+
+on:
+  workflow_dispatch:
+  schedule:
+  - cron: '15 8 * * 1-5'
+
+jobs:
+
+  e2e-tests:
+    timeout-minutes: 45
+    runs-on: [self-hosted, macos-latest, arm64]
+    env:
+      M1: 1
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          ref: main
+      - uses: ./.github/actions/yarn-install
+      - name: Disable admin-access before start up
+        run: |
+          mkdir -p $HOME/Library/Preferences/rancher-desktop
+          touch $HOME/Library/Preferences/rancher-desktop/settings.json
+          cat <<EOF > $HOME/Library/Preferences/rancher-desktop/settings.json
+          {
+            "version": 5,
+            "application": {
+              "adminAccess": false
+              "updater":  { "enabled": false },
+            },
+            "virtualMachine" {
+              "memoryInGB": 6,
+            },
+            "pathManagementStrategy": "rcfiles"
+          }
+          EOF
+      - name: Run Rancher Desktop in dev
+        run: |
+          yarn dev -- --no-modal-dialogs &
+          sleep 200
+          $HOME/.rd/bin/rdctl shutdown
+          wait
+      - name: Run e2e Tests
+        continue-on-error: false
+        run: yarn test:e2e
+      - name: Failed tests
+        if: failure()
+        run: mkdir -p ./e2e/reports
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+        if: failure()
+        with:
+          name: e2etest-artifacts
+          path: ./e2e/reports/*
+      - name: Cleanup test environment
+        run: |
+          #set -x
+          cd $HOME/Library
+          pushd Logs/rancher-desktop
+          for x in *.log ; do
+           echo -n '' > $x
+          done
+          popd
+          rm -fr "Application Support/rancher-desktop"
+          rm -fr Preferences/rancher-desktop
+          rm -fr Caches/rancher-desktop/k3s-versions.json
+          cd $HOME/.rd/bin
+          for x in helm kubectl nerdctl docker ; do
+           if [[ -L $x ]] ; then # && $(readlink $x):]] ; then
+           rm -f $x
+           fi
+          done
+        if: always()
+      - name: End stray processes
+        run: |
+          for x in nuxt qemu ; do
+           echo $x
+           ps auxww | grep $x
+          done
+          ps auxww | grep rancher | grep -vi -e goland
+        if: always()
